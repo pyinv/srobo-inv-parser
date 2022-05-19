@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """Traverse commits, but manual."""
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 from pathlib import Path
 from datetime import datetime
 from typing import List, Optional, Union, Literal
@@ -11,11 +11,38 @@ from read_inv import Asset, load_inventory_safe
 END_COMMIT = "master"
 END_COMMIT = "8bb7e30f8"
 
+asset_keys = {
+    "mac_address",
+    "development",
+    "description",
+    "revision",
+    "physical_condition",
+    "bootloader_version",
+    "supplier",
+    "part_number",
+    "labelled",
+    "condition",
+    "value",
+}
+
+asset_key_aliases = {
+    "mac": "mac_address",
+    "serial": "serial_number",
+}
+
 class AssetSchema(BaseModel):
 
     asset_code: str
     asset_type: str
     data: dict
+
+    @validator("data")
+    def trim_data(cls, v: dict) -> dict:
+        data = {k: v for k, v in v.items() if k in asset_keys}
+        for key, new_key in asset_key_aliases.items():
+            if key in data:
+                data[new_key] = v[key]
+        return data
 
     @classmethod
     def from_tuple(cls, asset: Asset) -> 'AssetSchema':

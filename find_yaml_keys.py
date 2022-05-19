@@ -12,10 +12,10 @@ for fa in current.values():
         if not isinstance(data, dict):
             print(data)
             continue
-        for key in data.keys():
+        for key, val in data.items():
             if key not in keys:
                 keys.add(key)
-                print(f"{key} {fa.asset_code} {fa.location}")
+                print(f"{key} {fa.type} {fa.asset_code} {fa.location}: {val}")
     except AttributeError:
         # not an asset
         pass
