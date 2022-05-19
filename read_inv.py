@@ -17,10 +17,7 @@ class Asset(NamedTuple):
     asset_code: AssetCode
     type: str
     location: str
-    data: str
-
-    def load_data(self):
-        return yaml.safe_load(self.data)
+    data: dict
 
 def find_highest_common_parent(path: Path):
     if path == Path("."):
@@ -46,11 +43,11 @@ def load_inventory(root_dir: Path) -> Dict[AssetCode, Asset]:
             if item.name == "info":
                 name = item.parent.name
                 location = item.parent.parent
-                data = item.read_bytes()
+                data = yaml.safe_load(item.read_bytes())
             else:
                 name = item.name
                 location = item.parent
-                data = item.read_bytes()
+                data = yaml.safe_load(item.read_bytes())
             
             match = PART_REGEX.match(name)
             if not match:

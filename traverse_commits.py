@@ -15,7 +15,7 @@ class AssetSchema(BaseModel):
 
     asset_code: str
     asset_type: str
-    data: str
+    data: dict
 
     @classmethod
     def from_tuple(cls, asset: Asset) -> 'AssetSchema':
