@@ -43,11 +43,17 @@ def load_inventory(root_dir: Path) -> Dict[AssetCode, Asset]:
             if item.name == "info":
                 name = item.parent.name
                 location = item.parent.parent
-                data = yaml.safe_load(item.read_bytes())
+                try:
+                    data = yaml.safe_load(item.read_bytes())
+                except Exception:
+                    data = {}
             else:
                 name = item.name
                 location = item.parent
-                data = yaml.safe_load(item.read_bytes())
+                try:
+                    data = yaml.safe_load(item.read_bytes())
+                except Exception:
+                    data = {}
             
             match = PART_REGEX.match(name)
             if not match:

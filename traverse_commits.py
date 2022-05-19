@@ -9,7 +9,7 @@ from git import Repo
 from read_inv import Asset, load_inventory_safe
 
 END_COMMIT = "master"
-END_COMMIT = "8bb7e30f8"
+# END_COMMIT = "8bb7e30f8"
 
 asset_keys = {
     "mac_address",
@@ -34,10 +34,12 @@ class AssetSchema(BaseModel):
 
     asset_code: str
     asset_type: str
-    data: dict
+    data: Optional[dict]
 
-    @validator("data")
-    def trim_data(cls, v: dict) -> dict:
+    @validator("data", pre=True)
+    def trim_data(cls, v: Optional[dict]) -> dict:
+        if v is None:
+            return {}
         data = {k: v for k, v in v.items() if k in asset_keys}
         for key, new_key in asset_key_aliases.items():
             if key in data:
