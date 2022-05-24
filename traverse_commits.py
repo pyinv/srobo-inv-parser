@@ -10,6 +10,7 @@ from read_inv import Asset, load_inventory_safe
 
 END_COMMIT = "master"
 # END_COMMIT = "8bb7e30f8"
+END_COMMIT = "ec1ae9aa8"
 
 asset_keys = {
     "mac_address",
@@ -33,6 +34,7 @@ asset_key_aliases = {
 class AssetSchema(BaseModel):
 
     asset_code: str
+    location: str
     asset_type: str
     data: Optional[dict]
 
@@ -50,6 +52,7 @@ class AssetSchema(BaseModel):
     def from_tuple(cls, asset: Asset) -> 'AssetSchema':
         return cls(
             asset_code=asset.asset_code,
+            location=str(asset.location),
             asset_type=asset.type,
             data=asset.data,
         )
