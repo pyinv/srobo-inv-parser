@@ -8,7 +8,8 @@ They are unlikely to be of much use to you!
 
 The following keys are present in the inventory, roughly:
 
-```non-essential-mods
+```
+non-essential-mods
 cased
 photos
 tested
