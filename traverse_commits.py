@@ -3,13 +3,14 @@
 from pydantic import BaseModel, Field, validator
 from pathlib import Path
 from datetime import datetime
-from typing import List, Optional, Union, Literal
+from graphlib import TopologicalSorter
+from typing import Dict, List, Optional, Union, Literal
 from typing_extensions import Annotated
 from git import Repo
 from read_inv import Asset, load_inventory_safe
 
 END_COMMIT = "master"
-# END_COMMIT = "8bb7e30f8"
+END_COMMIT = "8bb7e30f8"
 END_COMMIT = "ec1ae9aa8"
 
 asset_keys = {
@@ -119,7 +120,7 @@ for commit in sorted(commits, key=lambda x: x.committed_date):
 
     repo.git.checkout(commit)
 
-    events = []
+    events: Dict[str, List[Event]] = {}
 
     dt = datetime.utcfromtimestamp(commit.committed_date)
     current = load_inventory_safe(Path("."))
@@ -153,18 +154,26 @@ for commit in sorted(commits, key=lambda x: x.committed_date):
         if code in disposed_codes:
             # EVENT: RESTORED
             restored_count += 1
-            events.append(RestoreAssetEvent(
+            event = RestoreAssetEvent(
                 asset=AssetSchema.from_tuple(current[code]),
-            ))
+            )
+            if code in events:
+                events[code].append(event)
+            else:
+                events[code] = [event]
             live_codes.add(code)
             disposed_codes.remove(code)
 
         elif isinstance(code, str):
             # EVENT: CREATED
             added_count += 1
-            events.append(AddAssetEvent(
+            event = AddAssetEvent(
                 asset=AssetSchema.from_tuple(current[code]),
-            ))
+            )
+            if code in events:
+                events[code].append(event)
+            else:
+                events[code] = [event]
             live_codes.add(code)
 
     # Disposed
@@ -172,9 +181,13 @@ for commit in sorted(commits, key=lambda x: x.committed_date):
         if isinstance(code, str):
             # EVENT DISPOSED
             removed_count += 1
-            events.append(DisposeAssetEvent(
+            event = DisposeAssetEvent(
                 asset_code=code,
-            ))
+            )
+            if code in events:
+                events[code].append(event)
+            else:
+                events[code] = [event]
             live_codes.remove(code)
             disposed_codes.add(code)
 
@@ -189,29 +202,46 @@ for commit in sorted(commits, key=lambda x: x.committed_date):
             if Asset(old.asset_code, old.type, new.location, old.data) == new:
                 # EVENT: MOVED
                 moved_count += 1
-                events.append(MoveAssetEvent(
+                event = MoveAssetEvent(
                     asset_code=code,
                     old_location=str(old.location),
                     new_location=str(new.location),
-                ))
+                )
+                if code in events:
+                    events[code].append(event)
+                else:
+                    events[code] = [event]
             else:
                 # EVENT: CHANGED
                 changed_count += 1
-                events.append(ChangeAssetEvent(
+                event = ChangeAssetEvent(
                     asset_code=code,
                     old=AssetSchema.from_tuple(old),
                     new=AssetSchema.from_tuple(new),
-                ))
+                )
+                if code in events:
+                    events[code].append(event)
+                else:
+                    events[code] = [event]
 
     print(f"{dt} A{added_count} D{removed_count} C{changed_count} M{moved_count} R{restored_count} :: {commit.summary}")
 
     event_count += added_count + removed_count + changed_count + moved_count + restored_count
 
+    graph = {code: {data.location} if data.location in current else {} for code, data in current.items()}
+    topo_sorter = TopologicalSorter(graph)
+    topo_sorted_assets = topo_sorter.static_order()
+
+    sorted_events = []
+    for asset in reversed([x for x in topo_sorted_assets if isinstance(x, str)]):
+        if asset in events:
+            sorted_events.extend(events[asset])
+
     cs = ChangeSet(
         timestamp=dt,
         user=commit.author.email,
         comment=commit.hexsha + ": " + commit.summary,
-        events=events,
+        events=sorted_events,
     )
     
     with Path(f"../changesets/{dt.isoformat()}-{commit.hexsha}.yaml").open("w") as fh:
