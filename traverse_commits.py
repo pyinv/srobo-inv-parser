@@ -229,11 +229,12 @@ for commit in sorted(commits, key=lambda x: x.committed_date):
     event_count += added_count + removed_count + changed_count + moved_count + restored_count
 
     graph = {code: {data.location} if data.location in current else {} for code, data in current.items()}
-    topo_sorter = TopologicalSorter(graph)
+    graph_filtered = {k: vl for k, vl in graph.items() if all(isinstance(v, str) for v in vl)}
+    topo_sorter = TopologicalSorter(graph_filtered)
     topo_sorted_assets = topo_sorter.static_order()
 
     sorted_events = []
-    for asset in reversed([x for x in topo_sorted_assets if isinstance(x, str)]):
+    for asset in reversed([x for x in topo_sorted_assets]):
         if asset in events:
             sorted_events.extend(events[asset])
 
