@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 """Traverse commits, but manual."""
+from dataclasses import dataclass
 from pydantic import BaseModel, Field, validator
 from pathlib import Path
 from datetime import datetime
@@ -228,9 +229,14 @@ for commit in sorted(commits, key=lambda x: x.committed_date):
 
     event_count += added_count + removed_count + changed_count + moved_count + restored_count
 
-    graph = {code: {data.location} if data.location in current else {} for code, data in current.items()}
-    graph_filtered = {k: vl for k, vl in graph.items() if all(isinstance(v, str) for v in vl)}
-    topo_sorter = TopologicalSorter(graph_filtered)
+    graph = {}
+    for touched_asset_code in events.keys():
+        if (info := current.get(touched_asset_code)) is not None:
+            if info.location in events.keys():
+                graph[touched_asset_code] = {info.location}
+        graph[touched_asset_code] = {}
+
+    topo_sorter = TopologicalSorter(graph)
     topo_sorted_assets = topo_sorter.static_order()
 
     sorted_events = []

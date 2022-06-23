@@ -2,3 +2,4 @@ venv/
 inventory/
 __pycache__
 changesets
+inv.json
