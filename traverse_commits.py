@@ -1,261 +1,123 @@
-#!/usr/bin/env python
-"""Traverse commits, but manual."""
-from dataclasses import dataclass
-from pydantic import BaseModel, Field, validator
+#!/usr/bin/env python3
+"""Student Robotics Inventory History Parser."""
+import argparse
+import json
+import subprocess
 from pathlib import Path
-from datetime import datetime
-from graphlib import TopologicalSorter
-from typing import Dict, List, Optional, Union, Literal
-from typing_extensions import Annotated
+from typing import Generator, List, TypedDict, Tuple
+from dictdiffer import diff
+
+from read_inv import PART_REGEX
+
 from git import Repo
-from read_inv import Asset, load_inventory_safe
 
-END_COMMIT = "master"
-END_COMMIT = "8bb7e30f8"
-END_COMMIT = "ec1ae9aa8"
+class CommitDict(TypedDict):
 
-asset_keys = {
-    "mac_address",
-    "development",
-    "description",
-    "revision",
-    "physical_condition",
-    "bootloader_version",
-    "supplier",
-    "part_number",
-    "labelled",
-    "condition",
-    "value",
-}
-
-asset_key_aliases = {
-    "mac": "mac_address",
-    "serial": "serial_number",
-}
-
-class AssetSchema(BaseModel):
-
-    asset_code: str
-    location: str
-    asset_type: str
-    data: Optional[dict]
-
-    @validator("data", pre=True)
-    def trim_data(cls, v: Optional[dict]) -> dict:
-        if v is None:
-            return {}
-        data = {k: v for k, v in v.items() if k in asset_keys}
-        for key, new_key in asset_key_aliases.items():
-            if key in data:
-                data[new_key] = v[key]
-        return data
-
-    @classmethod
-    def from_tuple(cls, asset: Asset) -> 'AssetSchema':
-        return cls(
-            asset_code=asset.asset_code,
-            location=str(asset.location),
-            asset_type=asset.type,
-            data=asset.data,
-        )
-
-class AddAssetEvent(BaseModel):
-
-    event: Literal["add"] = "add"
-    asset: AssetSchema
+    commit: str
+    message: str
+    author: Tuple[str, str]
+    timestamp: int
+    files: List[str]
 
 
-class ChangeAssetEvent(BaseModel):
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser("traverse_commits.py")
+    parser.add_argument("inventory_path", type=Path)
+    parser.add_argument("--clear-cache", action='store_true')
+    return parser.parse_args()
 
-    event: Literal["change"] = "change"
-    old: AssetSchema
-    new: AssetSchema
+def validate_path(inv_path: Path) -> None:
+    assert inv_path.exists()
+    assert inv_path.is_dir()
+    assert inv_path.joinpath(".git").exists()
 
+def get_raw_trees(repo: Repo, path: Path, *, skip_initial_commits: int = 0) -> Generator[CommitDict, None, None]:
+    commits = reversed(list(repo.iter_commits()))
 
-class DisposeAssetEvent(BaseModel):
+    # Skip any corrupted commits at the start.
+    for _ in range(skip_initial_commits):
+        next(commits)
 
-    event: Literal["dispose"] = "dispose"
-    asset_code: str
-
-class MoveAssetEvent(BaseModel):
-
-    event: Literal["move"] = "move"
-    asset_code: str
-    old_location: str
-    new_location: str
-
-class RestoreAssetEvent(BaseModel):
-
-    event: Literal["restore"] = "restore"
-    asset: AssetSchema
-
-Event = Annotated[
-    Union[AddAssetEvent, ChangeAssetEvent, DisposeAssetEvent, MoveAssetEvent, RestoreAssetEvent],
-    Field(discriminator="event"),
-]
-
-class ChangeSet(BaseModel):
-
-    timestamp: datetime
-    user: str
-    comment: str
-    events: List[Event]
+    for i, commit in enumerate(commits):
+        print(i, commit.message)
+        result = subprocess.check_output(["git", "ls-tree", "-r", "--name-only", str(commit)],cwd=path)
+        files = result.decode().splitlines()
+        yield {
+            "commit": commit, 
+            "files": files,
+        }
 
 
-repo = Repo(".")
-repo.git.checkout(END_COMMIT)  # Should be master for real thing
+def main() -> None:
+    args = parse_args()
+    path = args.inventory_path
+    validate_path(path)
+    repo = Repo(path)
 
-commits = repo.iter_commits()
+    previous_assets = {}
+    for data in get_raw_trees(repo, path, skip_initial_commits=4):
+        assets = {}
+        changeset = []
 
-live_codes = set()
-disposed_codes = set()
+        for path in data["files"]:
+            parts = path.split("/")
+            if parts[0] in [".github", ".meta", ".gitattributes", ".mailmap", ".git", "README.md"]:
+                continue
+            
+            last = parts[-1]
+            if ma := PART_REGEX.match(last):
+                _, code = ma.groups()
+                assets[code] = tuple(parts[:-1])
 
-event_count = 0
+        if changes := diff(previous_assets, assets):
+            for change_type, a, b in changes:
+                if change_type == "add":
+                    for code, location in b:
+                        changeset.append({
+                            "type": "added",
+                            "asset_code": code,
+                            "location": location,
+                        })
+                        # print(f"Added {code} at {location}")
+                elif change_type == "change":
+                    old, new = b
+                    if old[0] == "unknown-location":
+                        changeset.append({
+                            "type": "move",
+                            "asset_code": code,
+                            "old": None,
+                            "new": new,
+                        })
+                        # print(f"Found {a} after it was lost")
+                    elif new[0] == "unknown-location":
+                        changeset.append({
+                            "type": "move",
+                            "asset_code": code,
+                            "old": old,
+                            "new": None,
+                        })
+                        # print(f"Marked {b} lost")
+                    else:
+                        changeset.append({
+                            "type": "move",
+                            "asset_code": code,
+                            "old": old,
+                            "new": new,
+                        })
+                        # print(f"Moved {a} from {old} to {new}")
+                elif change_type == "remove":
+                    for code, _ in b:
+                        changeset.append({
+                            "type": "delete",
+                            "asset_code": code,
+                        })
+                        # print(f"Deleted {a} last seen in {location}")
+        commit = data["commit"]
+        if changeset:
+            with Path(f"changesets/{commit.authored_date}-{commit.hexsha}.json").open("w") as fh:
+                json.dump({"changes": changeset, "hash": commit.hexsha, "message": commit.message, "author_name": commit.author.name, "author_email": commit.author.email, "dt": commit.authored_date}, fh)
 
-previous = {}
+        previous_assets = assets
 
-for commit in sorted(commits, key=lambda x: x.committed_date):
-    if len(commit.parents) > 1:
-        # Merge commit, ignore
-        continue
-
-    repo.git.checkout(commit)
-
-    events: Dict[str, List[Event]] = {}
-
-    dt = datetime.utcfromtimestamp(commit.committed_date)
-    current = load_inventory_safe(Path("."))
-
-    # Look at diff
-    added = current.keys() - previous.keys()
-    removed = previous.keys() - current.keys()
-    changed = set()
-    for key, new_val in current.items():
-        try:
-            if previous[key] != new_val:
-                changed.add(key)
-        except KeyError:
-            pass
-
-    if len(added) + len(removed) + len(changed) == 0:
-        print(f"{dt} {commit.summary}")
-        continue
-
-    added_count = 0
-    removed_count = 0
-    changed_count = 0
-    moved_count = 0
-    restored_count = 0
-
-    # Added
-    for code in added:
-        if code in live_codes:
-            raise ValueError(f"{code} already exists ")
-        
-        if code in disposed_codes:
-            # EVENT: RESTORED
-            restored_count += 1
-            event = RestoreAssetEvent(
-                asset=AssetSchema.from_tuple(current[code]),
-            )
-            if code in events:
-                events[code].append(event)
-            else:
-                events[code] = [event]
-            live_codes.add(code)
-            disposed_codes.remove(code)
-
-        elif isinstance(code, str):
-            # EVENT: CREATED
-            added_count += 1
-            event = AddAssetEvent(
-                asset=AssetSchema.from_tuple(current[code]),
-            )
-            if code in events:
-                events[code].append(event)
-            else:
-                events[code] = [event]
-            live_codes.add(code)
-
-    # Disposed
-    for code in removed:
-        if isinstance(code, str):
-            # EVENT DISPOSED
-            removed_count += 1
-            event = DisposeAssetEvent(
-                asset_code=code,
-            )
-            if code in events:
-                events[code].append(event)
-            else:
-                events[code] = [event]
-            live_codes.remove(code)
-            disposed_codes.add(code)
-
-    # Changed
-    for code in changed:
-
-        if isinstance(code, str):
-
-            old = previous[code]
-            new = current[code]
-
-            if Asset(old.asset_code, old.type, new.location, old.data) == new:
-                # EVENT: MOVED
-                moved_count += 1
-                event = MoveAssetEvent(
-                    asset_code=code,
-                    old_location=str(old.location),
-                    new_location=str(new.location),
-                )
-                if code in events:
-                    events[code].append(event)
-                else:
-                    events[code] = [event]
-            else:
-                # EVENT: CHANGED
-                changed_count += 1
-                event = ChangeAssetEvent(
-                    asset_code=code,
-                    old=AssetSchema.from_tuple(old),
-                    new=AssetSchema.from_tuple(new),
-                )
-                if code in events:
-                    events[code].append(event)
-                else:
-                    events[code] = [event]
-
-    print(f"{dt} A{added_count} D{removed_count} C{changed_count} M{moved_count} R{restored_count} :: {commit.summary}")
-
-    event_count += added_count + removed_count + changed_count + moved_count + restored_count
-
-    graph = {}
-    for touched_asset_code in events.keys():
-        if (info := current.get(touched_asset_code)) is not None:
-            if info.location in events.keys():
-                graph[touched_asset_code] = {info.location}
-        graph[touched_asset_code] = {}
-
-    topo_sorter = TopologicalSorter(graph)
-    topo_sorted_assets = topo_sorter.static_order()
-
-    sorted_events = []
-    for asset in reversed([x for x in topo_sorted_assets]):
-        if asset in events:
-            sorted_events.extend(events[asset])
-
-    cs = ChangeSet(
-        timestamp=dt,
-        user=commit.author.email,
-        comment=commit.hexsha + ": " + commit.summary,
-        events=sorted_events,
-    )
-    
-    with Path(f"../changesets/{dt.isoformat()}-{commit.hexsha}.yaml").open("w") as fh:
-        fh.write(cs.json())
-
-    previous = current
-
-repo.git.checkout(END_COMMIT)
-
-print(f"COUNT: {event_count}")
+if __name__ == "__main__":
+    main()
