@@ -1,15 +1,10 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """Dump the inventory as JSON."""
 import json
 from pydantic import BaseModel, validator
 from pathlib import Path
-from datetime import datetime
-from graphlib import TopologicalSorter
-from typing import Dict, List, Optional
-from git import Repo
+from typing import Optional
 from read_inv import Asset, Location, load_inventory_safe
-
-END_COMMIT = "master"
 
 asset_keys = {
     "mac_address",
@@ -55,10 +50,6 @@ class AssetSchema(BaseModel):
             asset_type=asset.type,
             data=asset.data,
         )
-
-repo = Repo(".")
-repo.git.checkout(END_COMMIT)  # Should be master for real thing
-
 
 current = load_inventory_safe(Path("."))
 
