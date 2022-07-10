@@ -81,18 +81,18 @@ def main() -> None:
                         # print(f"Added {code} at {location}")
                 elif change_type == "change":
                     old, new = b
-                    if old[0] == "unknown-location":
+                    if old[0] in ["unknown-location", "disposed-of"]:
                         changeset.append({
                             "type": "move",
-                            "asset_code": code,
+                            "asset_code": a,
                             "old": None,
                             "new": new,
                         })
                         # print(f"Found {a} after it was lost")
-                    elif new[0] == "unknown-location":
+                    elif new[0] in ["unknown-location", "disposed-of"]:
                         changeset.append({
                             "type": "move",
-                            "asset_code": code,
+                            "asset_code": a,
                             "old": old,
                             "new": None,
                         })
@@ -100,16 +100,18 @@ def main() -> None:
                     else:
                         changeset.append({
                             "type": "move",
-                            "asset_code": code,
+                            "asset_code": a,
                             "old": old,
                             "new": new,
                         })
                         # print(f"Moved {a} from {old} to {new}")
                 elif change_type == "remove":
-                    for code, _ in b:
+                    for code, location in b:
                         changeset.append({
-                            "type": "delete",
+                            "type": "move",
                             "asset_code": code,
+                            "old": location,
+                            "new": None,
                         })
                         # print(f"Deleted {a} last seen in {location}")
         commit = data["commit"]
